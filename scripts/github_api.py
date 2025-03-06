@@ -45,10 +45,12 @@ class GitHubAPI:
         return {"status": "success", "triggered": True}
         
     def list_workflow_runs(self) -> Dict[str, Any]:
-        """List recent workflow runs"""
+        """List recent workflow runs for the recording workflow"""
+        # Get runs specifically for our workflow file
         response = requests.get(
-            f"{self.base_url}/actions/runs",
-            headers=self.headers
+            f"{self.base_url}/actions/workflows/download_m3u8.yml/runs",
+            headers=self.headers,
+            params={"per_page": 30}
         )
         
         response.raise_for_status()
