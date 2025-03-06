@@ -85,7 +85,14 @@ def is_m3u8_url(url: str) -> bool:
     return url.lower().endswith('.m3u8') or '.m3u8' in url.lower()
 
 def main():
-    st.title("M3U8 Stream Recorder")
+    st.set_page_config(
+        page_title="Video Stream Recorder",
+        page_icon="🎬",
+        layout="wide",
+        initial_sidebar_state="collapsed"
+    )
+    
+    st.title("Video Stream Recorder")
     
     # Handle OAuth callback if needed
     if not st.session_state.authenticated:
@@ -107,7 +114,7 @@ def main():
         repo_name=REPO_NAME
     )
     
-    # M3U8/YouTube URL input
+    # Video input section
     st.subheader("Record Stream or Download Video")
     with st.form("record_form"):
         url = st.text_input("Video URL", help="Enter an M3U8 stream URL or YouTube video URL")
@@ -144,7 +151,7 @@ def main():
                         email=email
                     )
                     
-                st.success(f"{'YouTube download' if is_youtube else 'M3U8 recording'} started successfully!")
+                st.success(f"{'YouTube video' if is_youtube else 'Stream'} recording started successfully!")
             except Exception as e:
                 st.error(f"Error starting recording: {str(e)}")
     
@@ -158,23 +165,32 @@ def main():
                 st.info("No recordings found")
             else:
                 for run in runs["workflow_runs"]:
-                    if run["name"] == "Download M3U8 Stream":
+                    if run["name"] == "Video Stream Recorder":
                         col1, col2, col3 = st.columns([3, 2, 2])
                         with col1:
                             st.write(f"Run: {run['id']}")
                         with col2:
-                            st.write(f"Status: {run['status']}")
+                            if run["status"] == "in_progress":
+                                st.warning("⏳ This recording is currently in progress...")
+                            elif run["status"] == "completed":
+                                st.success("✅ Recording completed successfully!")
+                            elif run["status"] == "failure":
+                                st.error("❌ This recording failed.")
+                            else:
+                                st.info(f"Status: {run['status']}")
                         with col3:
                             st.write(f"Created: {run['created_at']}")
                         
-                        # Show artifacts if workflow is completed
+                        # Show download information if workflow is completed
                         if run["status"] == "completed":
-                            try:
-                                artifacts = github_client.list_artifacts(run["id"])
-                                for artifact in artifacts["artifacts"]:
-                                    st.write(f"Download: [{artifact['name']}]({artifact['archive_download_url']})")
-                            except Exception as e:
-                                st.error(f"Error fetching artifacts: {str(e)}")
+                            st.write("Note: Files are now shared via file.io with download links sent by email.")
+                            st.write("Artifacts are no longer stored in GitHub.")
+                            
+                            # Show run details
+                            details_expander = st.expander("View run details")
+                            with details_expander:
+                                st.write(f"Workflow run URL: https://github.com/{REPO_OWNER}/{REPO_NAME}/actions/runs/{run['id']}")
+                                st.write("Check your email for download links, or view the run logs for more information.")
                         
                         st.divider()
         except Exception as e:
