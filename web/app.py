@@ -164,27 +164,32 @@ def main():
             if not runs["workflow_runs"]:
                 st.info("No recordings found")
             else:
+                found_runs = False
                 for run in runs["workflow_runs"]:
-                    if run["name"] == "Video Stream Recorder":
+                    # Check if this is from our workflow
+                    if run["path"] == ".github/workflows/download_m3u8.yml":
+                        found_runs = True
+                        
+                        # Layout with columns
                         col1, col2, col3 = st.columns([3, 2, 2])
                         with col1:
                             st.write(f"Run: {run['id']}")
                         with col2:
+                            # Status indicators
                             if run["status"] == "in_progress":
-                                st.warning("⏳ This recording is currently in progress...")
+                                st.warning("⏳ In Progress")
                             elif run["status"] == "completed":
-                                st.success("✅ Recording completed successfully!")
+                                st.success("✅ Completed")
                             elif run["status"] == "failure":
-                                st.error("❌ This recording failed.")
+                                st.error("❌ Failed")
                             else:
-                                st.info(f"Status: {run['status']}")
+                                st.info(f"{run['status']}")
                         with col3:
                             st.write(f"Created: {run['created_at']}")
                         
                         # Show download information if workflow is completed
                         if run["status"] == "completed":
                             st.write("Note: Files are now shared via file.io with download links sent by email.")
-                            st.write("Artifacts are no longer stored in GitHub.")
                             
                             # Show run details
                             details_expander = st.expander("View run details")
@@ -193,6 +198,9 @@ def main():
                                 st.write("Check your email for download links, or view the run logs for more information.")
                         
                         st.divider()
+                
+                if not found_runs:
+                    st.warning("No workflow runs found. Please try recording a video first.")
         except Exception as e:
             st.error(f"Error fetching recordings: {str(e)}")
 
