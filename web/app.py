@@ -5,10 +5,14 @@ from urllib.parse import urlencode
 import json
 import sys
 import inspect
+import re
 
 # Add the scripts directory to the Python path
-sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'scripts'))
-from github_api import GitHubAPI
+scripts_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'scripts')
+sys.path.append(scripts_dir)
+
+# Import from the directory we added to path
+from github_api import GitHubAPI  # Not scripts.github_api
 
 # GitHub OAuth settings
 CLIENT_ID = os.environ.get("GITHUB_CLIENT_ID")
@@ -67,6 +71,19 @@ def handle_callback():
             st.query_params.clear()
             st.rerun()
 
+def is_youtube_url(url: str) -> bool:
+    """Check if a URL is a YouTube URL"""
+    youtube_patterns = [
+        r"^(https?\:\/\/)?(www\.)?(youtube\.com|youtu\.?be)\/.+$",
+        r"^(https?\:\/\/)?(www\.)?youtube\.com\/watch\?v=.+$",
+        r"^(https?\:\/\/)?(www\.)?youtu\.be\/.+$"
+    ]
+    return any(re.match(pattern, url) for pattern in youtube_patterns)
+
+def is_m3u8_url(url: str) -> bool:
+    """Check if a URL is an M3U8 URL"""
+    return url.lower().endswith('.m3u8') or '.m3u8' in url.lower()
+
 def main():
     st.title("M3U8 Stream Recorder")
     
@@ -90,26 +107,46 @@ def main():
         repo_name=REPO_NAME
     )
     
-    # M3U8 URL input
-    st.subheader("Record Stream")
+    # M3U8/YouTube URL input
+    st.subheader("Record Stream or Download Video")
     with st.form("record_form"):
-        url = st.text_input("M3U8 URL", help="Enter the full m3u8 URL of the stream you want to record")
+        url = st.text_input("Video URL", help="Enter an M3U8 stream URL or YouTube video URL")
         name = st.text_input("Recording Name (optional)", help="Give your recording a name")
         email = st.text_input("Email Address (optional)", help="Receive a notification when recording is complete")
+        
+        # Show YouTube-specific options if it looks like a YouTube URL
+        youtube_options = False
+        if url and is_youtube_url(url):
+            youtube_options = True
+            is_live = st.checkbox("This is a live stream", help="Check this if you're recording a YouTube live stream")
+            st.info("YouTube live streams will be recorded from the beginning using the --live-from-start option.")
+        
         submitted = st.form_submit_button("Start Recording")
         
         if submitted and url:
             try:
-                st.write(f"Debug - Attempting to call with URL: {url}, Name: {name}, Email: {email}")
+                # Detect URL type
+                is_youtube = is_youtube_url(url)
                 
-                # Check the method signature to confirm it accepts email
-                st.write(f"Method signature: {inspect.signature(github_client.trigger_workflow)}")
-                
-                result = github_client.trigger_workflow(url=url, name=name, email=email)
-                st.success("Recording workflow started successfully!")
+                # Only pass is_live if it's a YouTube URL
+                if is_youtube:
+                    result = github_client.trigger_workflow(
+                        url=url, 
+                        name=name, 
+                        email=email, 
+                        is_youtube=True,
+                        is_live=is_live if youtube_options else False
+                    )
+                else:
+                    result = github_client.trigger_workflow(
+                        url=url, 
+                        name=name, 
+                        email=email
+                    )
+                    
+                st.success(f"{'YouTube download' if is_youtube else 'M3U8 recording'} started successfully!")
             except Exception as e:
                 st.error(f"Error starting recording: {str(e)}")
-                st.exception(e)  # This will show the full traceback
     
     # List recordings
     st.subheader("Your Recordings")
