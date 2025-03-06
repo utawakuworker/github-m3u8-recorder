@@ -4,15 +4,11 @@ import requests
 from urllib.parse import urlencode
 import json
 import sys
-import importlib
 import inspect
 
 # Add the scripts directory to the Python path
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'scripts'))
 from github_api import GitHubAPI
-
-# Force reload the module to ensure we have the latest version
-importlib.reload(scripts.github_api)
 
 # GitHub OAuth settings
 CLIENT_ID = os.environ.get("GITHUB_CLIENT_ID")
