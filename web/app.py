@@ -4,6 +4,7 @@ import requests
 from urllib.parse import urlencode
 import json
 import sys
+from typing import Optional, Dict, Any
 
 # Add the scripts directory to the Python path
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'scripts'))
@@ -94,11 +95,12 @@ def main():
     with st.form("record_form"):
         url = st.text_input("M3U8 URL", help="Enter the full m3u8 URL of the stream you want to record")
         name = st.text_input("Recording Name (optional)", help="Give your recording a name")
+        email = st.text_input("Email Address (optional)", help="Receive a notification when recording is complete")
         submitted = st.form_submit_button("Start Recording")
         
         if submitted and url:
             try:
-                result = github_client.trigger_workflow(url=url, name=name)
+                result = github_client.trigger_workflow(url=url, name=name, email=email)
                 st.success("Recording workflow started successfully!")
             except Exception as e:
                 st.error(f"Error starting recording: {str(e)}")
