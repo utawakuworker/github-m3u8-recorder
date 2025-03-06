@@ -36,9 +36,8 @@ def authenticate():
 
 def handle_callback():
     """Handle OAuth callback"""
-    query_params = st.experimental_get_query_params()
-    if "code" in query_params:
-        code = query_params["code"][0]
+    if "code" in st.query_params:
+        code = st.query_params["code"]
         response = requests.post(
             "https://github.com/login/oauth/access_token",
             data={
@@ -64,7 +63,7 @@ def handle_callback():
                 st.session_state.user = user_response.json()
             
             # Clear query parameters
-            st.experimental_set_query_params()
+            st.query_params.clear()
             st.rerun()
 
 def main():
