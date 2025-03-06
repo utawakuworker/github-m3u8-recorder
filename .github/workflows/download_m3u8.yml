@@ -1,4 +1,4 @@
-name: Download M3U8 Stream
+name: Download M3U8 or YouTube Stream
 
 on:
   repository_dispatch:
@@ -27,19 +27,113 @@ jobs:
           python -m pip install --upgrade pip
           pip install yt-dlp
           
-      - name: Download M3U8 stream
+      - name: Download stream
         id: download
         run: |
           mkdir -p downloads
-          yt-dlp -o "downloads/%(title)s.%(ext)s" "${{ github.event.client_payload.url }}"
-          echo "download_name=$(ls downloads | head -n 1)" >> $GITHUB_OUTPUT
           
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ github.event.client_payload.name || 'video-recording' }}
-          path: downloads/
-          retention-days: 7
+          # Check if this is a YouTube URL or M3U8
+          IS_YOUTUBE="${{ github.event.client_payload.is_youtube }}"
+          URL="${{ github.event.client_payload.url }}"
+          
+          if [ "$IS_YOUTUBE" = "true" ]; then
+            echo "Downloading YouTube video..."
+            if [ "${{ github.event.client_payload.is_live }}" = "true" ]; then
+              echo "Using live stream options..."
+              yt-dlp \
+                --live-from-start \
+                --wait-for-video 10-30 \
+                --retries 10 \
+                -o "downloads/%(title)s.%(ext)s" \
+                "$URL"
+            else
+              echo "Using standard YouTube download..."
+              yt-dlp \
+                -o "downloads/%(title)s.%(ext)s" \
+                "$URL"
+            fi
+          else
+            echo "Downloading M3U8 stream..."
+            yt-dlp \
+              -o "downloads/%(title)s.%(ext)s" \
+              "$URL"
+          fi
+          
+          # List downloaded files
+          echo "Downloaded files:"
+          ls -la downloads/
+          
+          # Set output for email notification
+          ORIGINAL_FILENAME=$(ls downloads | head -n 1)
+          echo "download_name=$ORIGINAL_FILENAME" >> $GITHUB_OUTPUT
+          echo "Original filename: $ORIGINAL_FILENAME"
+          
+      - name: Process large files
+        id: process
+        run: |
+          mkdir -p processed
+          FILENAME=$(ls downloads | head -n 1)
+          FILEPATH="downloads/$FILENAME"
+          
+          # Get file size in bytes
+          FILE_SIZE=$(stat -c%s "$FILEPATH")
+          echo "File size: $FILE_SIZE bytes"
+          
+          # 3.8GB in bytes (leaving some margin below 4GB)
+          MAX_SIZE=4080218931
+          
+          if [ "$FILE_SIZE" -gt "$MAX_SIZE" ]; then
+            echo "File exceeds 3.8GB, processing..."
+            
+            # Get file extension
+            EXTENSION="${FILENAME##*.}"
+            BASENAME="${FILENAME%.*}"
+            
+            # Split into 3.8GB chunks using ffmpeg
+            ffmpeg -i "$FILEPATH" -c copy -map 0 -segment_time 3800 -f segment "processed/${BASENAME}_%03d.$EXTENSION"
+            
+            # Create info file listing all parts
+            echo "This video was split into multiple parts due to file size limitations:" > processed/README.txt
+            ls processed/ | grep -v "README.txt" >> processed/README.txt
+            
+            echo "parts_created=true" >> $GITHUB_OUTPUT
+            echo "Files after splitting:"
+            ls -la processed/
+          else
+            echo "File is under size limit, no processing needed"
+            cp "$FILEPATH" processed/
+            echo "parts_created=false" >> $GITHUB_OUTPUT
+          fi
+          
+      - name: Install jq
+        run: sudo apt-get install -y jq
+          
+      - name: Upload to file.io
+        id: upload
+        run: |
+          # Create array to hold all download URLs
+          DOWNLOAD_URLS=()
+          
+          # Upload each file
+          for FILE in processed/*; do
+            if [ -f "$FILE" ]; then
+              echo "Uploading $FILE..."
+              RESPONSE=$(curl -F "file=@$FILE" https://file.io/?expires=14d)
+              URL=$(echo $RESPONSE | jq -r '.link')
+              FILENAME=$(basename "$FILE")
+              
+              if [ -n "$URL" ]; then
+                echo "$FILENAME: $URL" >> download_links.txt
+                DOWNLOAD_URLS+=("$FILENAME: $URL")
+                echo "Uploaded $FILENAME to $URL"
+              else
+                echo "Failed to upload $FILENAME"
+              fi
+            fi
+          done
+          
+          # Save all download links to output
+          echo "download_links=$(cat download_links.txt | tr '\n' ',' | sed 's/,$//')" >> $GITHUB_OUTPUT
           
       - name: Send email notification
         if: success()
@@ -49,18 +143,23 @@ jobs:
           server_port: 465
           username: ${{ secrets.EMAIL_USERNAME }}
           password: ${{ secrets.EMAIL_PASSWORD }}
-          subject: M3U8 Recording Complete - ${{ github.event.client_payload.name || 'Video Recording' }}
+          subject: Video Download Complete - ${{ github.event.client_payload.name || 'Video Recording' }}
           body: |
-            Your M3U8 recording has been completed successfully!
+            Your video download has been completed successfully!
             
-            Recording Details:
+            Download Details:
             - Name: ${{ github.event.client_payload.name || 'Video Recording' }}
-            - File: ${{ steps.download.outputs.download_name }}
-            - URL Recorded: ${{ github.event.client_payload.url }}
+            - Original File: ${{ steps.download.outputs.download_name }}
+            - URL: ${{ github.event.client_payload.url }}
+            - Type: ${{ github.event.client_payload.is_youtube == 'true' && 'YouTube' || 'M3U8 Stream' }}
             
-            You can download the recording from the GitHub Actions artifacts.
+            ${{ steps.process.outputs.parts_created == 'true' && 'This video was split into multiple parts due to size limitations. Please download all parts:' || 'Download Link:' }}
+            ${{ steps.process.outputs.parts_created == 'true' && steps.upload.outputs.download_links || steps.upload.outputs.download_url }}
+            
+            Note: Links will expire in 14 days. Files will be automatically deleted after download.
+            
             Workflow Run: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
             
-            This is an automated email from your M3U8 Recorder application.
+            This is an automated email from your Video Recorder application.
           to: ${{ github.event.client_payload.email }}
-          from: M3U8 Recorder <${{ secrets.EMAIL_USERNAME }}> 
+          from: Video Recorder <${{ secrets.EMAIL_USERNAME }}> 
