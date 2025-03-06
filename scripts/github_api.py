@@ -13,7 +13,7 @@ class GitHubAPI:
             "Accept": "application/vnd.github.v3+json"
         }
     
-    def trigger_workflow(self, url: str, name: Optional[str] = None) -> Dict[str, Any]:
+    def trigger_workflow(self, url: str, name: Optional[str] = None, email: Optional[str] = None) -> Dict[str, Any]:
         """Trigger the download workflow with the specified m3u8 URL"""
         payload = {
             "event_type": "download-m3u8",
@@ -24,6 +24,9 @@ class GitHubAPI:
         
         if name:
             payload["client_payload"]["name"] = name
+            
+        if email:
+            payload["client_payload"]["email"] = email
             
         response = requests.post(
             f"{self.base_url}/dispatches",
