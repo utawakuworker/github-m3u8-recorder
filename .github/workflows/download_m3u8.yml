@@ -27,7 +27,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install yt-dlp
           
-      - name: Generate YouTube cookies with curl
+      - name: Generate and verify YouTube cookies
         id: cookies
         run: |
           # Create cookie jar file
@@ -49,23 +49,35 @@ jobs:
             -H "TE: trailers"
           )
           
-          echo "Fetching YouTube homepage to generate cookies..."
+          # Fetch multiple YouTube pages to get a complete set of cookies
+          echo "Fetching YouTube pages to generate cookies..."
           curl -s -c youtube_cookies.txt -b youtube_cookies.txt "${HEADERS[@]}" "https://www.youtube.com/"
-          
-          # Fetch a second page to get more cookies
-          echo "Fetching YouTube trending page..."
           curl -s -c youtube_cookies.txt -b youtube_cookies.txt "${HEADERS[@]}" "https://www.youtube.com/feed/trending"
+          curl -s -c youtube_cookies.txt -b youtube_cookies.txt "${HEADERS[@]}" "https://www.youtube.com/feed/subscriptions"
           
-          # Process cookies file to ensure compatibility with yt-dlp
-          cat youtube_cookies.txt
-          
+          # Check if cookies file has content
           if [ -s youtube_cookies.txt ]; then
-            echo "cookies_generated=true" >> $GITHUB_OUTPUT
-            echo "Cookies generated successfully"
+            # Convert curl cookies to Netscape format that yt-dlp can use
+            echo "# Netscape HTTP Cookie File" > yt_cookies.txt
+            grep -v "^#" youtube_cookies.txt | grep -v "^$" | \
+            awk '{print $1 "\t" ($2 == "" ? "FALSE" : "TRUE") "\t" $3 "\t" ($4 == "" ? "FALSE" : "TRUE") "\t" $5 "\t" $6 "\t" $7}' >> yt_cookies.txt
+            
+            # Verify that important cookies exist
+            if grep -q "CONSENT" yt_cookies.txt && grep -q "VISITOR_INFO1_LIVE" yt_cookies.txt; then
+              echo "cookies_generated=true" >> $GITHUB_OUTPUT
+              echo "Cookies generated and verified successfully"
+            else
+              echo "cookies_generated=false" >> $GITHUB_OUTPUT
+              echo "Cookies missing important values"
+            fi
           else
             echo "cookies_generated=false" >> $GITHUB_OUTPUT
             echo "Failed to generate cookies"
           fi
+          
+          # Display the cookies for debugging
+          echo "Cookie contents:"
+          cat yt_cookies.txt
           
       - name: Try alternative method with yt-dlp extractors
         id: generate_config
@@ -112,10 +124,10 @@ jobs:
             
             # Check if we should use cookies
             if [ "${{ steps.cookies.outputs.cookies_generated }}" = "true" ]; then
-              YT_OPTS="$YT_OPTS --cookies youtube_cookies.txt"
-              echo "Using generated cookies"
+              YT_OPTS="$YT_OPTS --cookies yt_cookies.txt"
+              echo "Using verified cookies"
             else
-              echo "No cookies available, using alternative options"
+              echo "No valid cookies available, using alternative options"
             fi
             
             if [ "${{ github.event.client_payload.is_live }}" = "true" ]; then
