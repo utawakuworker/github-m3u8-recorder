@@ -12,15 +12,15 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-          
       - name: Install FFmpeg
         run: |
           sudo apt-get update
           sudo apt-get install -y ffmpeg
+        
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
           
       - name: Install dependencies
         run: |
@@ -28,13 +28,39 @@ jobs:
           pip install yt-dlp
           
       - name: Download M3U8 stream
+        id: download
         run: |
           mkdir -p downloads
           yt-dlp -o "downloads/%(title)s.%(ext)s" "${{ github.event.client_payload.url }}"
+          echo "download_name=$(ls downloads | head -n 1)" >> $GITHUB_OUTPUT
           
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ github.event.client_payload.name || 'video-recording' }}
           path: downloads/
-          retention-days: 7 
+          retention-days: 7
+          
+      - name: Send email notification
+        if: success()
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 465
+          username: ${{ secrets.EMAIL_USERNAME }}
+          password: ${{ secrets.EMAIL_PASSWORD }}
+          subject: M3U8 Recording Complete - ${{ github.event.client_payload.name || 'Video Recording' }}
+          body: |
+            Your M3U8 recording has been completed successfully!
+            
+            Recording Details:
+            - Name: ${{ github.event.client_payload.name || 'Video Recording' }}
+            - File: ${{ steps.download.outputs.download_name }}
+            - URL Recorded: ${{ github.event.client_payload.url }}
+            
+            You can download the recording from the GitHub Actions artifacts.
+            Workflow Run: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+            
+            This is an automated email from your M3U8 Recorder application.
+          to: ${{ github.event.client_payload.email }}
+          from: M3U8 Recorder <${{ secrets.EMAIL_USERNAME }}> 
