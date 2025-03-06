@@ -25,87 +25,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install yt-dlp
-          
-      - name: Generate and verify YouTube cookies
-        id: cookies
-        run: |
-          # Create cookie jar file
-          touch youtube_cookies.txt
-          
-          # Define browser-like headers
-          HEADERS=(
-            -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36"
-            -H "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8"
-            -H "Accept-Language: en-US,en;q=0.9"
-            -H "Accept-Encoding: gzip, deflate, br"
-            -H "Connection: keep-alive"
-            -H "Upgrade-Insecure-Requests: 1"
-            -H "Sec-Fetch-Dest: document"
-            -H "Sec-Fetch-Mode: navigate"
-            -H "Sec-Fetch-Site: none"
-            -H "Sec-Fetch-User: ?1"
-            -H "Cache-Control: max-age=0"
-            -H "TE: trailers"
-          )
-          
-          # Fetch multiple YouTube pages to get a complete set of cookies
-          echo "Fetching YouTube pages to generate cookies..."
-          curl -s -c youtube_cookies.txt -b youtube_cookies.txt "${HEADERS[@]}" "https://www.youtube.com/"
-          curl -s -c youtube_cookies.txt -b youtube_cookies.txt "${HEADERS[@]}" "https://www.youtube.com/feed/trending"
-          curl -s -c youtube_cookies.txt -b youtube_cookies.txt "${HEADERS[@]}" "https://www.youtube.com/feed/subscriptions"
-          
-          # Check if cookies file has content
-          if [ -s youtube_cookies.txt ]; then
-            # Convert curl cookies to Netscape format that yt-dlp can use
-            echo "# Netscape HTTP Cookie File" > yt_cookies.txt
-            grep -v "^#" youtube_cookies.txt | grep -v "^$" | \
-            awk '{print $1 "\t" ($2 == "" ? "FALSE" : "TRUE") "\t" $3 "\t" ($4 == "" ? "FALSE" : "TRUE") "\t" $5 "\t" $6 "\t" $7}' >> yt_cookies.txt
-            
-            # Verify that important cookies exist
-            if grep -q "CONSENT" yt_cookies.txt && grep -q "VISITOR_INFO1_LIVE" yt_cookies.txt; then
-              echo "cookies_generated=true" >> $GITHUB_OUTPUT
-              echo "Cookies generated and verified successfully"
-            else
-              echo "cookies_generated=false" >> $GITHUB_OUTPUT
-              echo "Cookies missing important values"
-            fi
-          else
-            echo "cookies_generated=false" >> $GITHUB_OUTPUT
-            echo "Failed to generate cookies"
-          fi
-          
-          # Display the cookies for debugging
-          echo "Cookie contents:"
-          cat yt_cookies.txt
-          
-      - name: Try alternative method with yt-dlp extractors
-        id: generate_config
-        if: steps.cookies.outputs.cookies_generated != 'true'
-        run: |
-          # Create .netrc file for authentication
-          echo "machine youtube.com login none password none" > ~/.netrc
-          chmod 600 ~/.netrc
-          
-          # Create yt-dlp config with optimized settings
-          mkdir -p ~/.config/yt-dlp/
-          cat > ~/.config/yt-dlp/config << EOF
-          --user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36"
-          --add-header "Accept-Language:en-US,en;q=0.9"
-          --add-header "Origin:https://www.youtube.com"
-          --add-header "Referer:https://www.youtube.com/"
-          --mark-watched
-          --embed-metadata
-          --embed-chapters
-          --embed-thumbnail
-          --embed-subs
-          --extractor-args "youtube:player_client=android,web"
-          --extractor-retries 5
-          --ignore-errors
-          --no-check-certificates
-          EOF
-          
-          echo "config_created=true" >> $GITHUB_OUTPUT
+          pip install yt-dlp requests
           
       - name: Download stream
         id: download
@@ -116,61 +36,129 @@ jobs:
           IS_YOUTUBE="${{ github.event.client_payload.is_youtube }}"
           URL="${{ github.event.client_payload.url }}"
           
+          # Define YouTube download functions
+          function try_piped_download {
+            local SUCCESS=false
+            
+            # Extract video ID from URL if not already done
+            local VIDEO_ID="${1:-$(echo $URL | grep -oP '(?<=youtu.be/|v=|/v/|youtube.com/embed/|youtube.com/shorts/)[^&?]*' || echo $URL)}"
+            
+            # Define Piped instances to try
+            local PIPED_INSTANCES=(
+              "https://piped.video"
+              "https://piped.kavin.rocks"
+              "https://pipedapi.tokhmi.xyz"
+              "https://pipedapi.moomoo.me"
+              "https://api-piped.mha.fi"
+            )
+            
+            for INSTANCE in "${PIPED_INSTANCES[@]}"; do
+              echo "Trying Piped instance: $INSTANCE"
+              
+              PIPED_URL="$INSTANCE/watch?v=$VIDEO_ID"
+              echo "Using URL: $PIPED_URL"
+              
+              yt-dlp \
+                --force-ipv4 \
+                --retries 10 \
+                --user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36" \
+                -o "downloads/%(title)s.%(ext)s" \
+                "$PIPED_URL" && SUCCESS=true && break
+            done
+            
+            return $([ "$SUCCESS" = "true" ] && echo 0 || echo 1)
+          }
+          
+          function try_youtube_tv_approach {
+            echo "Trying YouTube TV approach..."
+            
+            yt-dlp \
+              --force-ipv4 \
+              --user-agent "Mozilla/5.0 (Linux; Android 10; SM-G981B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/80.0.3987.162 Mobile Safari/537.36" \
+              --extractor-args "youtube:player_client=tv" \
+              -o "downloads/%(title)s.%(ext)s" \
+              "$URL" && return 0 || return 1
+          }
+          
+          function try_mobile_api_approach {
+            echo "Trying mobile API approach..."
+            
+            # Extract video ID from URL if not already done
+            local VIDEO_ID="${1:-$(echo $URL | grep -oP '(?<=youtu.be/|v=|/v/|youtube.com/embed/|youtube.com/shorts/)[^&?]*' || echo $URL)}"
+            
+            yt-dlp \
+              --force-ipv4 \
+              --user-agent "Mozilla/5.0 (iPhone; CPU iPhone OS 14_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0 Mobile/15E148 Safari/604.1" \
+              --add-header "Accept-Language:en-US,en;q=0.9" \
+              --extractor-args "youtube:player_client=android" \
+              -o "downloads/%(title)s.%(ext)s" \
+              "https://m.youtube.com/watch?v=$VIDEO_ID" && return 0 || return 1
+          }
+          
+          function try_direct_youtube_download {
+            echo "Attempting direct YouTube download with special clients..."
+            
+            # Common download options
+            YT_OPTS="--force-ipv4 --sleep-interval 2 --max-sleep-interval 5 --geo-bypass"
+            USER_AGENT="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36"
+            
+            # Define client types to try in order
+            CLIENTS=("tv_embedded" "web_embedded" "android")
+            
+            for CLIENT in "${CLIENTS[@]}"; do
+              echo "Trying with client: $CLIENT"
+              
+              if [ "${{ github.event.client_payload.is_live }}" = "true" ]; then
+                echo "Using live stream options..."
+                yt-dlp \
+                  $YT_OPTS \
+                  --live-from-start \
+                  --wait-for-video 10-30 \
+                  --retries 10 \
+                  --user-agent "$USER_AGENT" \
+                  --add-header "Accept-Language:en-US,en;q=0.9" \
+                  --extractor-args "youtube:player_client=$CLIENT" \
+                  -o "downloads/%(title)s.%(ext)s" \
+                  "$URL" && return 0
+              else
+                echo "Using standard YouTube download..."
+                yt-dlp \
+                  $YT_OPTS \
+                  --user-agent "$USER_AGENT" \
+                  --add-header "Accept-Language:en-US,en;q=0.9" \
+                  --extractor-args "youtube:player_client=$CLIENT" \
+                  -o "downloads/%(title)s.%(ext)s" \
+                  "$URL" && return 0
+              fi
+            done
+            
+            # If we got here, all client options failed
+            return 1
+          }
+          
+          # Main download logic
           if [ "$IS_YOUTUBE" = "true" ]; then
             echo "Downloading YouTube video..."
             
-            # Define advanced YouTube options
-            YT_OPTS="--force-ipv4 --sleep-interval 2 --max-sleep-interval 5 --geo-bypass"
+            # Extract video ID from URL
+            VIDEO_ID=$(echo $URL | grep -oP '(?<=youtu.be/|v=|/v/|youtube.com/embed/|youtube.com/shorts/)[^&?]*' || echo $URL)
+            echo "Extracted YouTube video ID: $VIDEO_ID"
             
-            # Check if we should use cookies
-            if [ "${{ steps.cookies.outputs.cookies_generated }}" = "true" ]; then
-              YT_OPTS="$YT_OPTS --cookies yt_cookies.txt"
-              echo "Using verified cookies"
+            # Try downloading using various methods
+            if try_piped_download "$VIDEO_ID"; then
+              echo "Successfully downloaded via Piped!"
+            elif try_youtube_tv_approach; then
+              echo "Successfully downloaded via YouTube TV client!"
+            elif try_mobile_api_approach "$VIDEO_ID"; then
+              echo "Successfully downloaded via Mobile API!"
+            elif try_direct_youtube_download; then
+              echo "Successfully downloaded directly from YouTube!"
             else
-              echo "No valid cookies available, using alternative options"
+              echo "All download methods failed."
+              echo "Please check the logs for more details."
+              exit 1
             fi
             
-            if [ "${{ github.event.client_payload.is_live }}" = "true" ]; then
-              echo "Using live stream options..."
-              yt-dlp \
-                $YT_OPTS \
-                --live-from-start \
-                --wait-for-video 10-30 \
-                --retries 10 \
-                --user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36" \
-                --add-header "Accept-Language:en-US,en;q=0.9" \
-                --extractor-args "youtube:player_client=android,web" \
-                -o "downloads/%(title)s.%(ext)s" \
-                "$URL" || \
-              # Fall back to alternative URL format if standard one fails
-              yt-dlp \
-                $YT_OPTS \
-                --live-from-start \
-                --wait-for-video 10-30 \
-                --retries 10 \
-                --user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36" \
-                --add-header "Accept-Language:en-US,en;q=0.9" \
-                --extractor-args "youtube:player_client=android,web" \
-                -o "downloads/%(title)s.%(ext)s" \
-                "https://www.youtube.com/watch?v=$(echo $URL | grep -oP '(?<=youtu.be/|v=|/v/|youtube.com/embed/|youtube.com/shorts/)[^&?]*' || echo $URL)"
-            else
-              echo "Using standard YouTube download..."
-              yt-dlp \
-                $YT_OPTS \
-                --user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36" \
-                --add-header "Accept-Language:en-US,en;q=0.9" \
-                --extractor-args "youtube:player_client=android,web" \
-                -o "downloads/%(title)s.%(ext)s" \
-                "$URL" || \
-              # Fall back to alternative URL format if standard one fails
-              yt-dlp \
-                $YT_OPTS \
-                --user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36" \
-                --add-header "Accept-Language:en-US,en;q=0.9" \
-                --extractor-args "youtube:player_client=android,web" \
-                -o "downloads/%(title)s.%(ext)s" \
-                "https://www.youtube.com/watch?v=$(echo $URL | grep -oP '(?<=youtu.be/|v=|/v/|youtube.com/embed/|youtube.com/shorts/)[^&?]*' || echo $URL)"
-            fi
           else
             echo "Downloading M3U8 stream..."
             yt-dlp \
