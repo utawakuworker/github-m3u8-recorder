@@ -4,11 +4,15 @@ import requests
 from urllib.parse import urlencode
 import json
 import sys
-from typing import Optional, Dict, Any
+import importlib
+import inspect
 
 # Add the scripts directory to the Python path
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'scripts'))
-from github_api import GitHubAPI
+from scripts.github_api import GitHubAPI
+
+# Force reload the module to ensure we have the latest version
+importlib.reload(scripts.github_api)
 
 # GitHub OAuth settings
 CLIENT_ID = os.environ.get("GITHUB_CLIENT_ID")
@@ -100,10 +104,16 @@ def main():
         
         if submitted and url:
             try:
+                st.write(f"Debug - Attempting to call with URL: {url}, Name: {name}, Email: {email}")
+                
+                # Check the method signature to confirm it accepts email
+                st.write(f"Method signature: {inspect.signature(github_client.trigger_workflow)}")
+                
                 result = github_client.trigger_workflow(url=url, name=name, email=email)
                 st.success("Recording workflow started successfully!")
             except Exception as e:
                 st.error(f"Error starting recording: {str(e)}")
+                st.exception(e)  # This will show the full traceback
     
     # List recordings
     st.subheader("Your Recordings")
