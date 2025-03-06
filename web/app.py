@@ -9,7 +9,7 @@ import inspect
 
 # Add the scripts directory to the Python path
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'scripts'))
-from scripts.github_api import GitHubAPI
+from github_api import GitHubAPI
 
 # Force reload the module to ensure we have the latest version
 importlib.reload(scripts.github_api)
