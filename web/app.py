@@ -4,6 +4,7 @@ import requests
 from urllib.parse import urlencode
 import json
 import sys
+import importlib
 import inspect
 import re
 
@@ -80,6 +81,14 @@ def is_youtube_url(url: str) -> bool:
     ]
     return any(re.match(pattern, url) for pattern in youtube_patterns)
 
+def is_twitter_url(url: str) -> bool:
+    """Check if a URL is a Twitter/X URL"""
+    twitter_patterns = [
+        r"^(https?\:\/\/)?(www\.)?(twitter\.com|x\.com)\/.+\/status\/.+$",
+        r"^(https?\:\/\/)?(www\.)?(t\.co)\/.+$"
+    ]
+    return any(re.match(pattern, url) for pattern in twitter_patterns)
+
 def is_m3u8_url(url: str) -> bool:
     """Check if a URL is an M3U8 URL"""
     return url.lower().endswith('.m3u8') or '.m3u8' in url.lower()
@@ -123,10 +132,15 @@ def main():
         
         # Show YouTube-specific options if it looks like a YouTube URL
         youtube_options = False
+        twitter_url = False
+        
         if url and is_youtube_url(url):
             youtube_options = True
             is_live = st.checkbox("This is a live stream", help="Check this if you're recording a YouTube live stream")
             st.info("YouTube live streams will be recorded from the beginning using the --live-from-start option.")
+        elif url and is_twitter_url(url):
+            twitter_url = True
+            st.info("Twitter/X video will be downloaded. Please ensure the URL points directly to a tweet containing video.")
         
         submitted = st.form_submit_button("Start Recording")
         
@@ -134,24 +148,37 @@ def main():
             try:
                 # Detect URL type
                 is_youtube = is_youtube_url(url)
+                is_twitter = is_twitter_url(url)
                 
-                # Only pass is_live if it's a YouTube URL
+                # Handle different URL types
                 if is_youtube:
                     result = github_client.trigger_workflow(
                         url=url, 
                         name=name, 
                         email=email, 
                         is_youtube=True,
+                        is_twitter=False,
                         is_live=is_live if youtube_options else False
                     )
+                    st.success("YouTube video recording started successfully!")
+                elif is_twitter:
+                    result = github_client.trigger_workflow(
+                        url=url, 
+                        name=name, 
+                        email=email,
+                        is_youtube=False,
+                        is_twitter=True
+                    )
+                    st.success("Twitter video download started successfully!")
                 else:
                     result = github_client.trigger_workflow(
                         url=url, 
                         name=name, 
-                        email=email
+                        email=email,
+                        is_youtube=False,
+                        is_twitter=False
                     )
-                    
-                st.success(f"{'YouTube video' if is_youtube else 'Stream'} recording started successfully!")
+                    st.success("Stream recording started successfully!")
             except Exception as e:
                 st.error(f"Error starting recording: {str(e)}")
     
