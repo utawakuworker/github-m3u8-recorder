@@ -25,140 +25,48 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install yt-dlp requests
+          pip install yt-dlp
           
       - name: Download stream
         id: download
         run: |
           mkdir -p downloads
           
-          # Check if this is a YouTube URL or M3U8
+          # Check URL type
           IS_YOUTUBE="${{ github.event.client_payload.is_youtube }}"
+          IS_TWITTER="${{ github.event.client_payload.is_twitter }}"
           URL="${{ github.event.client_payload.url }}"
           
-          # Define YouTube download functions
-          function try_piped_download {
-            local SUCCESS=false
-            
-            # Extract video ID from URL if not already done
-            local VIDEO_ID="${1:-$(echo $URL | grep -oP '(?<=youtu.be/|v=|/v/|youtube.com/embed/|youtube.com/shorts/)[^&?]*' || echo $URL)}"
-            
-            # Define Piped instances to try
-            local PIPED_INSTANCES=(
-              "https://piped.video"
-              "https://piped.kavin.rocks"
-              "https://pipedapi.tokhmi.xyz"
-              "https://pipedapi.moomoo.me"
-              "https://api-piped.mha.fi"
-            )
-            
-            for INSTANCE in "${PIPED_INSTANCES[@]}"; do
-              echo "Trying Piped instance: $INSTANCE"
-              
-              PIPED_URL="$INSTANCE/watch?v=$VIDEO_ID"
-              echo "Using URL: $PIPED_URL"
-              
-              yt-dlp \
-                --force-ipv4 \
-                --retries 10 \
-                --user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36" \
-                -o "downloads/%(title)s.%(ext)s" \
-                "$PIPED_URL" && SUCCESS=true && break
-            done
-            
-            return $([ "$SUCCESS" = "true" ] && echo 0 || echo 1)
-          }
-          
-          function try_youtube_tv_approach {
-            echo "Trying YouTube TV approach..."
-            
-            yt-dlp \
-              --force-ipv4 \
-              --user-agent "Mozilla/5.0 (Linux; Android 10; SM-G981B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/80.0.3987.162 Mobile Safari/537.36" \
-              --extractor-args "youtube:player_client=tv" \
-              -o "downloads/%(title)s.%(ext)s" \
-              "$URL" && return 0 || return 1
-          }
-          
-          function try_mobile_api_approach {
-            echo "Trying mobile API approach..."
-            
-            # Extract video ID from URL if not already done
-            local VIDEO_ID="${1:-$(echo $URL | grep -oP '(?<=youtu.be/|v=|/v/|youtube.com/embed/|youtube.com/shorts/)[^&?]*' || echo $URL)}"
-            
-            yt-dlp \
-              --force-ipv4 \
-              --user-agent "Mozilla/5.0 (iPhone; CPU iPhone OS 14_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0 Mobile/15E148 Safari/604.1" \
-              --add-header "Accept-Language:en-US,en;q=0.9" \
-              --extractor-args "youtube:player_client=android" \
-              -o "downloads/%(title)s.%(ext)s" \
-              "https://m.youtube.com/watch?v=$VIDEO_ID" && return 0 || return 1
-          }
-          
-          function try_direct_youtube_download {
-            echo "Attempting direct YouTube download with special clients..."
-            
-            # Common download options
-            YT_OPTS="--force-ipv4 --sleep-interval 2 --max-sleep-interval 5 --geo-bypass"
-            USER_AGENT="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36"
-            
-            # Define client types to try in order
-            CLIENTS=("tv_embedded" "web_embedded" "android")
-            
-            for CLIENT in "${CLIENTS[@]}"; do
-              echo "Trying with client: $CLIENT"
-              
-              if [ "${{ github.event.client_payload.is_live }}" = "true" ]; then
-                echo "Using live stream options..."
-                yt-dlp \
-                  $YT_OPTS \
-                  --live-from-start \
-                  --wait-for-video 10-30 \
-                  --retries 10 \
-                  --user-agent "$USER_AGENT" \
-                  --add-header "Accept-Language:en-US,en;q=0.9" \
-                  --extractor-args "youtube:player_client=$CLIENT" \
-                  -o "downloads/%(title)s.%(ext)s" \
-                  "$URL" && return 0
-              else
-                echo "Using standard YouTube download..."
-                yt-dlp \
-                  $YT_OPTS \
-                  --user-agent "$USER_AGENT" \
-                  --add-header "Accept-Language:en-US,en;q=0.9" \
-                  --extractor-args "youtube:player_client=$CLIENT" \
-                  -o "downloads/%(title)s.%(ext)s" \
-                  "$URL" && return 0
-              fi
-            done
-            
-            # If we got here, all client options failed
-            return 1
-          }
-          
-          # Main download logic
           if [ "$IS_YOUTUBE" = "true" ]; then
-            echo "Downloading YouTube video..."
+            echo "Downloading YouTube video via Cloudflare Worker..."
             
-            # Extract video ID from URL
+            # Set up common options for YouTube
+            YT_OPTS="--force-ipv4 --retries 10 --geo-bypass"
+            
+            # Extract video ID
             VIDEO_ID=$(echo $URL | grep -oP '(?<=youtu.be/|v=|/v/|youtube.com/embed/|youtube.com/shorts/)[^&?]*' || echo $URL)
-            echo "Extracted YouTube video ID: $VIDEO_ID"
             
-            # Try downloading using various methods
-            if try_piped_download "$VIDEO_ID"; then
-              echo "Successfully downloaded via Piped!"
-            elif try_youtube_tv_approach; then
-              echo "Successfully downloaded via YouTube TV client!"
-            elif try_mobile_api_approach "$VIDEO_ID"; then
-              echo "Successfully downloaded via Mobile API!"
-            elif try_direct_youtube_download; then
-              echo "Successfully downloaded directly from YouTube!"
-            else
-              echo "All download methods failed."
-              echo "Please check the logs for more details."
-              exit 1
-            fi
+            # Use your Cloudflare Worker URL
+            WORKER_URL="https://your-worker.your-subdomain.workers.dev/?v=$VIDEO_ID"
             
+            yt-dlp \
+              $YT_OPTS \
+              --user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36" \
+              --add-header "Accept-Language:en-US,en;q=0.9" \
+              -o "downloads/%(title)s.%(ext)s" \
+              "$WORKER_URL"
+          elif [ "$IS_TWITTER" = "true" ]; then
+            echo "Downloading Twitter/X video..."
+            
+            # Set up Twitter download options
+            TWITTER_OPTS="--force-ipv4 --retries 10 --cookies-from-browser chrome"
+            
+            yt-dlp \
+              $TWITTER_OPTS \
+              --user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36" \
+              --add-header "Accept-Language:en-US,en;q=0.9" \
+              -o "downloads/twitter_%(id)s.%(ext)s" \
+              "$URL"
           else
             echo "Downloading M3U8 stream..."
             yt-dlp \
@@ -263,7 +171,7 @@ jobs:
             - Name: ${{ github.event.client_payload.name || 'Video Recording' }}
             - Original File: ${{ steps.download.outputs.download_name }}
             - URL: ${{ github.event.client_payload.url }}
-            - Type: ${{ github.event.client_payload.is_youtube == 'true' && 'YouTube' || 'M3U8 Stream' }}
+            - Type: ${{ github.event.client_payload.is_youtube == 'true' && 'YouTube' || github.event.client_payload.is_twitter == 'true' && 'Twitter/X' || 'M3U8 Stream' }}
             
             ${{ steps.process.outputs.parts_created == 'true' && 'This video was split into multiple parts due to size limitations. Please download all parts:' || 'Download Link:' }}
             ${{ steps.process.outputs.parts_created == 'true' && steps.upload.outputs.download_links || steps.upload.outputs.download_url }}
