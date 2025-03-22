@@ -128,32 +128,96 @@ jobs:
       - name: Install jq
         run: sudo apt-get install -y jq
           
-      - name: Upload to file.io
+      - name: Upload to file sharing service
         id: upload
         run: |
           # Create array to hold all download URLs
           DOWNLOAD_URLS=()
+          UPLOAD_SUCCESS=true
           
           # Upload each file
           for FILE in processed/*; do
             if [ -f "$FILE" ]; then
-              echo "Uploading $FILE..."
-              RESPONSE=$(curl -F "file=@$FILE" https://file.io/?expires=14d)
-              URL=$(echo $RESPONSE | jq -r '.link')
               FILENAME=$(basename "$FILE")
+              echo "Uploading $FILE..."
               
-              if [ -n "$URL" ]; then
-                echo "$FILENAME: $URL" >> download_links.txt
-                DOWNLOAD_URLS+=("$FILENAME: $URL")
-                echo "Uploaded $FILENAME to $URL"
-              else
-                echo "Failed to upload $FILENAME"
+              # Get file size in MB
+              FILE_SIZE_MB=$(du -m "$FILE" | cut -f1)
+              echo "File size: $FILE_SIZE_MB MB"
+              
+              # Try upload with gofile.io as primary service
+              UPLOAD_SUCCEEDED=false
+              
+              # First try gofile.io (no size limit)
+              echo "Uploading to gofile.io..."
+              RESPONSE=$(curl -F "file=@$FILE" https://store1.gofile.io/uploadFile)
+              echo "Response: $RESPONSE"
+              
+              # Parse response safely
+              if echo "$RESPONSE" | jq -e '.status' >/dev/null 2>&1 && [ "$(echo "$RESPONSE" | jq -r '.status')" = "ok" ]; then
+                URL=$(echo "$RESPONSE" | jq -r '.data.downloadPage')
+                
+                if [ -n "$URL" ]; then
+                  echo "$FILENAME: $URL" >> download_links.txt
+                  DOWNLOAD_URLS+=("$FILENAME: $URL")
+                  echo "Uploaded $FILENAME to $URL"
+                  UPLOAD_SUCCEEDED=true
+                fi
+              fi
+              
+              # If gofile.io failed and file is small enough, try file.io as fallback
+              if [ "$UPLOAD_SUCCEEDED" = "false" ] && [ "$FILE_SIZE_MB" -le 2000 ]; then
+                echo "Gofile.io upload failed, trying file.io for fallback..."
+                RESPONSE=$(curl -F "file=@$FILE" https://file.io/?expires=14d)
+                echo "Response: $RESPONSE"
+                
+                # Parse response carefully
+                if echo "$RESPONSE" | jq -e '.success' >/dev/null 2>&1 && [ "$(echo "$RESPONSE" | jq -r '.success')" = "true" ]; then
+                  URL=$(echo "$RESPONSE" | jq -r '.link')
+                  
+                  if [ -n "$URL" ]; then
+                    echo "$FILENAME: $URL" >> download_links.txt
+                    DOWNLOAD_URLS+=("$FILENAME: $URL")
+                    echo "Uploaded $FILENAME to $URL (via file.io)"
+                    UPLOAD_SUCCEEDED=true
+                  fi
+                fi
+              fi
+              
+              # If both services failed, mark for artifact upload
+              if [ "$UPLOAD_SUCCEEDED" = "false" ]; then
+                echo "Failed to upload $FILENAME to any service"
+                echo "$FILENAME: Upload failed - will be available as GitHub artifact" >> download_links.txt
+                UPLOAD_SUCCESS=false
               fi
             fi
           done
           
+          # Create download_links.txt if it doesn't exist
+          touch download_links.txt
+          
           # Save all download links to output
           echo "download_links=$(cat download_links.txt | tr '\n' ',' | sed 's/,$//')" >> $GITHUB_OUTPUT
+          
+          # Set flag for artifact upload
+          echo "upload_success=$UPLOAD_SUCCESS" >> $GITHUB_OUTPUT
+
+      - name: Save files as artifacts (fallback)
+        if: steps.upload.outputs.upload_success == 'false'
+        uses: actions/upload-artifact@v3
+        with:
+          name: video-files
+          path: processed/
+          retention-days: 7
+          
+      - name: Update email message
+        id: email_message
+        run: |
+          if [ "${{ steps.upload.outputs.upload_success }}" = "false" ]; then
+            echo "message=Some files couldn't be uploaded to file sharing services and are available as artifacts in the GitHub workflow. You can download them from: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}" >> $GITHUB_OUTPUT
+          else
+            echo "message=Note: Links may expire after some time." >> $GITHUB_OUTPUT
+          fi
           
       - name: Send email notification
         if: success()
@@ -176,10 +240,20 @@ jobs:
             ${{ steps.process.outputs.parts_created == 'true' && 'This video was split into multiple parts due to size limitations. Please download all parts:' || 'Download Link:' }}
             ${{ steps.process.outputs.parts_created == 'true' && steps.upload.outputs.download_links || steps.upload.outputs.download_url }}
             
-            Note: Links will expire in 14 days. Files will be automatically deleted after download.
+            ${{ steps.email_message.outputs.message }}
             
             Workflow Run: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
             
             This is an automated email from your Video Recorder application.
           to: ${{ github.event.client_payload.email }}
           from: Video Recorder <${{ secrets.EMAIL_USERNAME }}> 
+          
+      - name: Cleanup old workflow runs
+        if: always()
+        uses: Mattraks/delete-workflow-runs@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ github.repository }}
+          retain_days: 7
+          keep_minimum_runs: 10
+          delete_workflow_pattern: download_m3u8.yml 
