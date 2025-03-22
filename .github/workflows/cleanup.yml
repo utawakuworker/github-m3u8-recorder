@@ -1,0 +1,23 @@
+name: Cleanup Old Workflow Runs
+
+on:
+  schedule:
+    # Run at 2:00 AM UTC every day
+    - cron: '0 2 * * *'
+  # Allow manual triggering
+  workflow_dispatch:
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete old workflow runs
+        uses: Mattraks/delete-workflow-runs@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ github.repository }}
+          # Keep the most recent 100 workflow runs
+          retain_days: 7
+          keep_minimum_runs: 10
+          # Delete workflow runs for download_m3u8.yml
+          delete_workflow_pattern: download_m3u8.yml
