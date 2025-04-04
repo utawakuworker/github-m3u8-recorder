@@ -204,7 +204,7 @@ jobs:
 
       - name: Save files as artifacts (fallback)
         if: steps.upload.outputs.upload_success == 'false'
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: video-files
           path: processed/
