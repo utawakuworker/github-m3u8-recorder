@@ -38,23 +38,17 @@ jobs:
           URL="${{ github.event.client_payload.url }}"
           
           if [ "$IS_YOUTUBE" = "true" ]; then
-            echo "Downloading YouTube video via Cloudflare Worker..."
+            echo "Downloading YouTube video..."
             
-            # Set up common options for YouTube
+            # Set up options for YouTube
             YT_OPTS="--force-ipv4 --retries 10 --geo-bypass"
-            
-            # Extract video ID
-            VIDEO_ID=$(echo $URL | grep -oP '(?<=youtu.be/|v=|/v/|youtube.com/embed/|youtube.com/shorts/)[^&?]*' || echo $URL)
-            
-            # Use your Cloudflare Worker URL
-            WORKER_URL="https://your-worker.your-subdomain.workers.dev/?v=$VIDEO_ID"
             
             yt-dlp \
               $YT_OPTS \
               --user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36" \
               --add-header "Accept-Language:en-US,en;q=0.9" \
               -o "downloads/%(title)s.%(ext)s" \
-              "$WORKER_URL"
+              "$URL"
           elif [ "$IS_TWITTER" = "true" ]; then
             echo "Downloading Twitter/X video..."
             
